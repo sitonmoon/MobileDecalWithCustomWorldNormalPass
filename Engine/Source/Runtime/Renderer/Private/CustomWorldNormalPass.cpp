@@ -2,6 +2,7 @@
 
 #include "ScenePrivate.h"
 #include "SceneRendering.h"
+#include "LightMapRendering.h"
 
 #include "Shader.h"
 #include "GlobalShader.h"
@@ -9,50 +10,143 @@
 #include "MeshPassProcessor.h"
 #include "MeshPassProcessor.inl"
 
-class FMyNormalPassVS : public FMeshMaterialShader
+class FMyNormalPassShaderElementData : public FMeshMaterialShaderElementData
+{
+public:
+	const FLightCacheInterface* LCI = nullptr;
+};
+
+class FMyNormalPassVSPolicyParamType : public FMeshMaterialShader, public FUniformLightMapPolicy::VertexParametersType
+{
+	DECLARE_INLINE_TYPE_LAYOUT_EXPLICIT_BASES(FMyNormalPassVSPolicyParamType, NonVirtual, FMeshMaterialShader, FUniformLightMapPolicy::VertexParametersType);
+
+protected:
+	FMyNormalPassVSPolicyParamType() {}
+	FMyNormalPassVSPolicyParamType(const FMeshMaterialShaderType::CompiledShaderInitializerType& Initializer)
+		: FMeshMaterialShader(Initializer)
+	{
+		FUniformLightMapPolicy::VertexParametersType::Bind(Initializer.ParameterMap);
+	}
+
+public:
+	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		FMobileDistanceFieldShadowsAndLQLightMapPolicy::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+	}
+
+	void GetShaderBindings(
+		const FScene* Scene,
+		ERHIFeatureLevel::Type FeatureLevel,
+		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+		const FMaterialRenderProxy& MaterialRenderProxy,
+		const FMaterial& Material,
+		const FMeshPassProcessorRenderState& DrawRenderState,
+		const FMeshMaterialShaderElementData& ShaderElementData,
+		FMeshDrawSingleShaderBindings& ShaderBindings) const
+	{
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		const FMyNormalPassShaderElementData& MyShaderElementData = static_cast<const FMyNormalPassShaderElementData&>(ShaderElementData);
+		FUniformLightMapPolicy::GetVertexShaderBindings(PrimitiveSceneProxy, MyShaderElementData.LCI, this, ShaderBindings);
+	}
+};
+
+class FMyNormalPassVSBaseType : public FMyNormalPassVSPolicyParamType
+{
+	typedef FMyNormalPassVSPolicyParamType Super;
+	DECLARE_INLINE_TYPE_LAYOUT(FMyNormalPassVSBaseType, NonVirtual);
+
+protected:
+	FMyNormalPassVSBaseType() {}
+	FMyNormalPassVSBaseType(const FMeshMaterialShaderType::CompiledShaderInitializerType& Initializer)
+		: Super(Initializer)
+	{
+	}
+
+public:
+	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
+	{
+		return IsMobilePlatform(Parameters.Platform)
+			&& FMobileDistanceFieldShadowsAndLQLightMapPolicy::ShouldCompilePermutation(Parameters);
+	}
+};
+
+class FMyNormalPassVS : public FMyNormalPassVSBaseType
 {
 	DECLARE_SHADER_TYPE(FMyNormalPassVS, MeshMaterial);
 
-	FMyNormalPassVS() {}
 public:
-
+	FMyNormalPassVS() {}
 	FMyNormalPassVS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FMeshMaterialShader(Initializer)
+		: FMyNormalPassVSBaseType(Initializer)
 	{
 	}
-
-	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
-	{
-		return IsMobilePlatform(Parameters.Platform) ;
-	}
-
-	void GetShaderBindings(const FScene* Scene, ERHIFeatureLevel::Type FeatureLevel, const FPrimitiveSceneProxy* PrimitiveSceneProxy, const FMaterialRenderProxy& MaterialRenderProxy, const FMaterial& Material, const FMeshPassProcessorRenderState& DrawRenderState, const FMeshMaterialShaderElementData& ShaderElementData, FMeshDrawSingleShaderBindings& ShaderBindings)
-	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
-	}
-
 };
 
-class FMyNormalPassPS : public FMeshMaterialShader
+class FMyNormalPassPSPolicyParamType : public FMeshMaterialShader, public FUniformLightMapPolicy::PixelParametersType
+{
+	DECLARE_INLINE_TYPE_LAYOUT_EXPLICIT_BASES(FMyNormalPassPSPolicyParamType, NonVirtual, FMeshMaterialShader, FUniformLightMapPolicy::PixelParametersType);
+
+protected:
+	FMyNormalPassPSPolicyParamType() {}
+	FMyNormalPassPSPolicyParamType(const FMeshMaterialShaderType::CompiledShaderInitializerType& Initializer)
+		: FMeshMaterialShader(Initializer)
+	{
+		FUniformLightMapPolicy::PixelParametersType::Bind(Initializer.ParameterMap);
+	}
+
+public:
+	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		FMobileDistanceFieldShadowsAndLQLightMapPolicy::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+	}
+
+	void GetShaderBindings(
+		const FScene* Scene,
+		ERHIFeatureLevel::Type FeatureLevel,
+		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+		const FMaterialRenderProxy& MaterialRenderProxy,
+		const FMaterial& Material,
+		const FMeshPassProcessorRenderState& DrawRenderState,
+		const FMeshMaterialShaderElementData& ShaderElementData,
+		FMeshDrawSingleShaderBindings& ShaderBindings) const
+	{
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		const FMyNormalPassShaderElementData& MyShaderElementData = static_cast<const FMyNormalPassShaderElementData&>(ShaderElementData);
+		FUniformLightMapPolicy::GetPixelShaderBindings(PrimitiveSceneProxy, MyShaderElementData.LCI, this, ShaderBindings);
+	}
+};
+
+class FMyNormalPassPSBaseType : public FMyNormalPassPSPolicyParamType
+{
+	typedef FMyNormalPassPSPolicyParamType Super;
+	DECLARE_INLINE_TYPE_LAYOUT(FMyNormalPassPSBaseType, NonVirtual);
+
+protected:
+	FMyNormalPassPSBaseType() {}
+	FMyNormalPassPSBaseType(const FMeshMaterialShaderType::CompiledShaderInitializerType& Initializer)
+		: Super(Initializer)
+	{
+	}
+
+public:
+	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
+	{
+		return IsMobilePlatform(Parameters.Platform)
+			&& FMobileDistanceFieldShadowsAndLQLightMapPolicy::ShouldCompilePermutation(Parameters);
+	}
+};
+
+class FMyNormalPassPS : public FMyNormalPassPSBaseType
 {
 	DECLARE_SHADER_TYPE(FMyNormalPassPS, MeshMaterial);
 
 public:
-
 	FMyNormalPassPS() {}
 	FMyNormalPassPS(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
-		: FMeshMaterialShader(Initializer)
+		: FMyNormalPassPSBaseType(Initializer)
 	{
-		//PassUniformBuffer.Bind(Initializer.ParameterMap, FMobileSceneTextureUniformParameters::StaticStructMetadata.GetShaderVariableName());
-	}
-
-	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
-	{
-		return IsMobilePlatform(Parameters.Platform);
-	}
-	void GetShaderBindings(const FScene* Scene, ERHIFeatureLevel::Type FeatureLevel, const FPrimitiveSceneProxy* PrimitiveSceneProxy, const FMaterialRenderProxy& MaterialRenderProxy, const FMaterial& Material, const FMeshPassProcessorRenderState& DrawRenderState, const FMeshMaterialShaderElementData& ShaderElementData, FMeshDrawSingleShaderBindings& ShaderBindings)
-	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
 	}
 };
 
@@ -78,7 +172,6 @@ void FMobileSceneRenderer::RenderCustomWorldNormalPass(FRHICommandListImmediate&
 	}
 
 	FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
-	//const FCustomCaptureTextures CustomCaptureTextures = SceneContext.RequestCustomCapture(RHICmdList, bPrimitives);
 	const FCustomWorldNormalTextures CustomWorldNormalTextures = SceneContext.RequestCustomWorldNormal(RHICmdList, bPrimitives);
 
 	if (CustomWorldNormalTextures.CustomWorldNormal)
@@ -110,32 +203,6 @@ void FMobileSceneRenderer::RenderCustomWorldNormalPass(FRHICommandListImmediate&
 
 			RHICmdList.SetViewport(View.ViewRect.Min.X, View.ViewRect.Min.Y, 0, View.ViewRect.Max.X, View.ViewRect.Max.Y, 1);
 			View.ParallelMeshDrawCommandPasses[EMeshPass::CustomWorldNormalPass].DispatchDraw(nullptr, RHICmdList);
-
-			//RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, PassViews.Num() > 1, "View%d", ViewIndex);
-			//FRDGBuilder GraphBuilder(RHICmdList);
-			// Only clear once the target for every views it contains.
-			//ERenderTargetLoadAction LoadAction = ERenderTargetLoadAction::EClear;
-			//FRenderTargetParameters* PassParameters = GraphBuilder.AllocParameters<FRenderTargetParameters>();
-			//PassParameters->RenderTargets[0] = FRenderTargetBinding(CustomCaptureTextures.CustomColor, LoadAction);
-			////PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding();
-
-			//// Next pass, do not clear the shared target, only render into it
-			//LoadAction = ERenderTargetLoadAction::ELoad;
-			//
-			//GraphBuilder.AddPass(
-			//	RDG_EVENT_NAME("CustomCapture"),
-			//	PassParameters,
-			//	ERDGPassFlags::Raster,
-			//	[this, &View](FRHICommandListImmediate& RHICmdList)
-			//	{
-			//		FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
-
-			//		Scene->UniformBuffers.CustomDepthViewUniformBuffer.UpdateUniformBufferImmediate(*View.CachedViewUniformShaderParameters);
-			//		// If we don't render this pass in stereo we simply update the buffer with the same view uniform parameters.
-			//		Scene->UniformBuffers.InstancedCustomDepthViewUniformBuffer.UpdateUniformBufferImmediate(reinterpret_cast<FInstancedViewUniformShaderParameters&>(*View.CachedViewUniformShaderParameters));
-
-			//		View.ParallelMeshDrawCommandPasses[EMeshPass::CustomCapturePass].DispatchDraw(nullptr, RHICmdList);
-			//	});
 
 		}
 
@@ -234,8 +301,9 @@ void FMyNormalPassProcessor::Process(
 	const ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(MeshBatch, MaterialResource, OverrideSettings);
 	const ERasterizerCullMode MeshCullMode = ComputeMeshCullMode(MeshBatch, MaterialResource, OverrideSettings);
 
-	FMeshMaterialShaderElementData ShaderElementData;
+	FMyNormalPassShaderElementData ShaderElementData;
 	ShaderElementData.InitializeMeshMaterialData(ViewIfDynamicMeshCommand, PrimitiveSceneProxy, MeshBatch, StaticMeshId, true);
+	ShaderElementData.LCI = MeshBatch.LCI;
 
 	const FMeshDrawCommandSortKey SortKey = CalculateMeshStaticSortKey(MyPassShaders.VertexShader, MyPassShaders.PixelShader);
 

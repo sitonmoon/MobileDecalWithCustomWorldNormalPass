@@ -25,6 +25,7 @@ FDeferredDecalProxy::FDeferredDecalProxy(const UDecalComponent* InComponent)
 	, FadeStartDelayNormalized(1.0f)
 	, FadeInStartDelayNormalized(0.0f)
 	, FadeScreenSize( InComponent->FadeScreenSize )
+	, EnableBlendWorldNormal (InComponent->bBlendWorldNormal)
 {
 	UMaterialInterface* EffectiveMaterial = UMaterial::GetDefaultMaterial(MD_DeferredDecal);
 	UMaterialInterface* ComponentMaterial = InComponent->GetDecalMaterial();

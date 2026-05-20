@@ -1803,6 +1803,9 @@ public:
 	float FadeInStartDelayNormalized;
 
 	float FadeScreenSize;
+
+	/** 是否与本帧 CustomWorldNormal RT 做法线混合（来自 UDecalComponent） */
+	bool EnableBlendWorldNormal = false;
 };
 
 /** Reflection capture shapes. */

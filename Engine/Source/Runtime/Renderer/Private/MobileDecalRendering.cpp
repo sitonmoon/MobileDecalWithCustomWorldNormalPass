@@ -252,6 +252,9 @@ void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene
 	FGraphicsPipelineStateInitializer GraphicsPSOInit;
 	RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
 
+	FSceneRenderTargets& SceneContext = FSceneRenderTargets::Get(RHICmdList);
+	const bool bViewHasCustomWorldNormalTexture = View.bHasCustomWorldNormalPrimitives && SceneContext.CustomWorldNormal.IsValid();
+
 	// Build a list of decals that need to be rendered for this view
 	FTransientDecalRenderDataList SortedDecals;
 	FDecalRendering::BuildVisibleDecalList(Scene, View, DRS_Mobile, &SortedDecals);
@@ -307,8 +310,8 @@ void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene
 				GraphicsPSOInit.BlendState = MobileForward_GetDecalBlendState(DecalData.FinalDecalBlendMode);
 			}
 
-			// Set shader params
-			FDecalRendering::SetShader(RHICmdList, GraphicsPSOInit, View, DecalData, DRS_Mobile, FrustumComponentToClip);
+			const bool bBlendReceiverWorldNormal = bViewHasCustomWorldNormalTexture && DecalProxy.EnableBlendWorldNormal;
+			FDecalRendering::SetShader(RHICmdList, GraphicsPSOInit, View, DecalData, DRS_Mobile, FrustumComponentToClip, Scene.UniformBuffers.MobileDirectionalLightUniformBuffers[1].GetReference(), &Scene, bBlendReceiverWorldNormal);
 			
 			RHICmdList.DrawIndexedPrimitive(GetUnitCubeIndexBuffer(), 0, 0, 8, 0, UE_ARRAY_COUNT(GCubeIndices) / 3, 1);
 		}

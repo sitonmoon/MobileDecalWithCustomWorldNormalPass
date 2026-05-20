@@ -1,4 +1,8 @@
 #include "Common.ush"
+
+#undef NEEDS_LIGHTMAP_COORDINATE
+#define NEEDS_LIGHTMAP_COORDINATE 1
+
 #include "/Engine/Generated/Material.ush"
 #include "/Engine/Generated/VertexFactory.ush"
 
@@ -15,30 +19,50 @@ void MainVS(FVertexFactoryInput Input, out FCustomPassVSToPS Output)
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
 	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
 	Output.Position = INVARIANT(mul(WorldPos, ResolvedView.TranslatedWorldToClip));
-	
-	// setup normal tangent
+
 	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
-	
-	// output factor interpolants
 	Output.Interpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
 }
- 
+
+#if PIXELSHADER && NEEDS_LIGHTMAP_COORDINATE && STATICLIGHTING_TEXTUREMASK && STATICLIGHTING_SIGNEDDISTANCEFIELD
+#include "/Engine/Generated/UniformBuffers/PrecomputedLightingBuffer.ush"
+#include "LightmapData.ush"
+
+half CustomWorldNormalGetStaticShadowMask(FVertexFactoryInterpolantsVSToPS Interpolants)
+{
+	float2 ShadowMapCoordinate;
+	uint LightmapDataIndex;
+	// LocalVF：LightMapCoordinate.zw；地形 ES3.1：Interpolants.ShadowMapCoordinate（见 LandscapeVertexFactory.ush）
+	GetShadowMapCoordinate(Interpolants, ShadowMapCoordinate, LightmapDataIndex);
+
+	half DistanceField = Texture2DSample(
+		LightmapResourceCluster.StaticShadowTexture,
+		LightmapResourceCluster.StaticShadowTextureSampler,
+		ShadowMapCoordinate).r;
+	float4 InvUniformPenumbraSizes = GetLightmapData(LightmapDataIndex).InvUniformPenumbraSizes;
+	float DistanceFieldBias = -.5f * InvUniformPenumbraSizes.x + .5f;
+	half ShadowFactor = saturate(DistanceField * InvUniformPenumbraSizes.x + DistanceFieldBias);
+	return GetLightmapData(LightmapDataIndex).StaticShadowMapMasks.r * ShadowFactor * ShadowFactor;
+}
+#endif
+
 void MainPS(
 	FCustomPassVSToPS Input,
     out float4 OutColor : SV_Target0
 )
 {
-	OutColor.rgb = 0;
-	OutColor.a = 1;
+	OutColor = float4(0, 0, 0, 1);
 
-    // 输出 WorldNormal（-1..1 编码到 0..1）
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Input.Interpolants, Input.Position);
 	FPixelMaterialInputs PixelMaterialInputs;
 	CalcPixelMaterialInputs(MaterialParameters, PixelMaterialInputs);
-	
+
 	half3 MaterialNormal = GetMaterialNormalRaw(PixelMaterialInputs);
 	MaterialParameters.WorldNormal = TransformTangentNormalToWorld(MaterialParameters.TangentToWorld, MaterialNormal);
 	OutColor.rgb = MaterialParameters.WorldNormal * 0.5f + 0.5f;
 
+#if PIXELSHADER && NEEDS_LIGHTMAP_COORDINATE && STATICLIGHTING_TEXTUREMASK && STATICLIGHTING_SIGNEDDISTANCEFIELD
+	OutColor.a = CustomWorldNormalGetStaticShadowMask(Input.Interpolants);
+#endif
 }

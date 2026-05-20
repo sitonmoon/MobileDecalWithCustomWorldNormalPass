@@ -10,8 +10,10 @@
 #include "GlobalShader.h"
 #include "MaterialShaderType.h"
 #include "MaterialShader.h"
+#include "ShaderParameterUtils.h"
 #include "DebugViewModeRendering.h"
 #include "ScenePrivate.h"
+#include "SceneView.h"
 #include "PipelineStateCache.h"
 
 static TAutoConsoleVariable<float> CVarDecalFadeScreenSizeMultiplier(
@@ -100,6 +102,8 @@ public:
 		WorldToDecal.Bind(Initializer.ParameterMap,TEXT("WorldToDecal"));
 		DecalOrientation.Bind(Initializer.ParameterMap,TEXT("DecalOrientation"));
 		DecalParams.Bind(Initializer.ParameterMap, TEXT("DecalParams"));
+		// MobileDirectionalLight 使用 IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT，无有效全局 StaticSlot，须按着色器参数绑定（与 MobileBasePass 一致）
+		MobileDirectionalLightUB.Bind(Initializer.ParameterMap, FMobileDirectionalLightShaderParameters::StaticStructMetadata.GetShaderVariableName());
 	}
 
 	void SetParameters(FRHICommandList& RHICmdList, const FViewInfo& View, const FMaterialRenderProxy* MaterialProxy, const FDeferredDecalProxy& DecalProxy, const float FadeAlphaValue=1.0f)
@@ -170,15 +174,48 @@ public:
 		SetShaderValue(RHICmdList, ShaderRHI, DecalParams, FVector2D(FadeAlphaValue, LifetimeAlpha));
 	}
 
+	void SetMobileDirectionalLightUniformBuffer(FRHICommandList& RHICmdList, FRHIUniformBuffer* InBuffer)
+	{
+		if (InBuffer && MobileDirectionalLightUB.IsBound())
+		{
+			SetUniformBufferParameter(RHICmdList, RHICmdList.GetBoundPixelShader(), MobileDirectionalLightUB, InBuffer);
+		}
+	}
+
 private:
 	LAYOUT_FIELD(FShaderParameter, SvPositionToDecal);
 	LAYOUT_FIELD(FShaderParameter, DecalToWorld);
 	LAYOUT_FIELD(FShaderParameter, WorldToDecal);
 	LAYOUT_FIELD(FShaderParameter, DecalOrientation);
 	LAYOUT_FIELD(FShaderParameter, DecalParams);
+	LAYOUT_FIELD(FShaderUniformBufferParameter, MobileDirectionalLightUB);
 };
 
 IMPLEMENT_MATERIAL_SHADER_TYPE(,FDeferredDecalPS,TEXT("/Engine/Private/DeferredDecal.usf"),TEXT("MainPS"),SF_Pixel);
+
+
+class FDeferredDecalPSWithCustomWorldNormal : public FDeferredDecalPS
+{
+	DECLARE_SHADER_TYPE(FDeferredDecalPSWithCustomWorldNormal, Material);
+public:
+	static bool ShouldCompilePermutation(const FMaterialShaderPermutationParameters& Parameters)
+	{
+		return FDeferredDecalPS::ShouldCompilePermutation(Parameters) && IsMobilePlatform(Parameters.Platform);
+	}
+	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FDeferredDecalPS::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("DECAL_BLEND_WORLDNORMAL"), TEXT("1"));
+	}
+	FDeferredDecalPSWithCustomWorldNormal() {}
+	FDeferredDecalPSWithCustomWorldNormal(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FDeferredDecalPS(Initializer)
+	{
+	}
+};
+
+IMPLEMENT_MATERIAL_SHADER_TYPE(, FDeferredDecalPSWithCustomWorldNormal, TEXT("/Engine/Private/DeferredDecal.usf"), TEXT("MainPS"), SF_Pixel);
+
 
 class FDeferredDecalEmissivePS : public FDeferredDecalPS
 {
@@ -203,6 +240,29 @@ public:
 };
 
 IMPLEMENT_MATERIAL_SHADER_TYPE(, FDeferredDecalEmissivePS, TEXT("/Engine/Private/DeferredDecal.usf"), TEXT("MainPS"), SF_Pixel);
+
+
+class FDeferredDecalEmissivePSWithCustomWorldNormal : public FDeferredDecalEmissivePS
+{
+	DECLARE_SHADER_TYPE(FDeferredDecalEmissivePSWithCustomWorldNormal, Material);
+public:
+	static bool ShouldCompilePermutation(const FMaterialShaderPermutationParameters& Parameters)
+	{
+		return FDeferredDecalEmissivePS::ShouldCompilePermutation(Parameters) && IsMobilePlatform(Parameters.Platform);
+	}
+	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FDeferredDecalEmissivePS::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("DECAL_BLEND_WORLDNORMAL"), TEXT("1"));
+	}
+	FDeferredDecalEmissivePSWithCustomWorldNormal() {}
+	FDeferredDecalEmissivePSWithCustomWorldNormal(const ShaderMetaType::CompiledShaderInitializerType& Initializer)
+		: FDeferredDecalEmissivePS(Initializer)
+	{
+	}
+};
+IMPLEMENT_MATERIAL_SHADER_TYPE(, FDeferredDecalEmissivePSWithCustomWorldNormal, TEXT("/Engine/Private/DeferredDecal.usf"), TEXT("MainPS"), SF_Pixel);
+
 
 bool FDecalRendering::BuildVisibleDecalList(const FScene& Scene, const FViewInfo& View, EDecalRenderStage DecalRenderStage, FTransientDecalRenderDataList* OutVisibleDecals)
 {
@@ -346,16 +406,28 @@ FMatrix FDecalRendering::ComputeComponentToClipMatrix(const FViewInfo& View, con
 }
 
 void FDecalRendering::SetShader(FRHICommandList& RHICmdList, FGraphicsPipelineStateInitializer& GraphicsPSOInit, const FViewInfo& View,
-	const FTransientDecalRenderData& DecalData, EDecalRenderStage DecalRenderStage, const FMatrix& FrustumComponentToClip)
+	const FTransientDecalRenderData& DecalData, EDecalRenderStage DecalRenderStage, const FMatrix& FrustumComponentToClip, 
+	FRHIUniformBuffer* MobileDirectionalLightUniformBuffer, const FScene* Scene, bool bBlendReceiverWorldNormal)
 {
 	const FMaterialShaderMap* MaterialShaderMap = DecalData.MaterialResource->GetRenderingThreadShaderMap();
 	const EDebugViewShaderMode DebugViewMode = View.Family->GetDebugViewShaderMode();
 
 	// When in shader complexity, decals get rendered as emissive even though there might not be emissive decals.
 	// FDeferredDecalEmissivePS might not be available depending on the decal blend mode.
-	TShaderRef<FDeferredDecalPS> PixelShader = (DecalRenderStage == DRS_Emissive && DebugViewMode == DVSM_None)
-		? TShaderRef<FDeferredDecalPS>(MaterialShaderMap->GetShader<FDeferredDecalEmissivePS>())
-		: MaterialShaderMap->GetShader<FDeferredDecalPS>();
+	const bool bEmissiveShader = (DecalRenderStage == DRS_Emissive && DebugViewMode == DVSM_None);
+	TShaderRef<FDeferredDecalPS> PixelShader;
+	if (bBlendReceiverWorldNormal)
+	{
+		PixelShader = bEmissiveShader
+			? TShaderRef<FDeferredDecalPS>(MaterialShaderMap->GetShader<FDeferredDecalEmissivePSWithCustomWorldNormal>())
+			: MaterialShaderMap->GetShader<FDeferredDecalPSWithCustomWorldNormal>();
+	}
+	else
+	{
+		PixelShader = bEmissiveShader
+			? TShaderRef<FDeferredDecalPS>(MaterialShaderMap->GetShader<FDeferredDecalEmissivePS>())
+			: MaterialShaderMap->GetShader<FDeferredDecalPS>();
+	}
 
 	TShaderMapRef<FDeferredDecalVS> VertexShader(View.ShaderMap);
 
@@ -367,6 +439,11 @@ void FDecalRendering::SetShader(FRHICommandList& RHICmdList, FGraphicsPipelineSt
 
 		SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit);
 		PixelShader->SetParameters(RHICmdList, View, DecalData.MaterialProxy, *DecalData.DecalProxy, DecalData.FadeAlpha);
+
+		if (MobileDirectionalLightUniformBuffer)
+		{
+			PixelShader->SetMobileDirectionalLightUniformBuffer(RHICmdList, MobileDirectionalLightUniformBuffer);
+		}
 	}
 
 	// SetUniformBufferParameter() need to happen after the shader has been set otherwise a DebugBreak could occur.

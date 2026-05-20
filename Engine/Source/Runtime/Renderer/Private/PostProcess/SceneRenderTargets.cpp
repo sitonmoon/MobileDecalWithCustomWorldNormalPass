@@ -2138,13 +2138,13 @@ FCustomWorldNormalTextures FSceneRenderTargets::RequestCustomWorldNormal(FRHICom
 		if (!CustomWorldNormal)
 		{
 			// World normal in 0..1 (encoded from -1..1).
-			const FClearValueBinding ClearNormal(FLinearColor(0.f, 0.f, 0.f, 1.0f));
+			const FClearValueBinding ClearNormal(FLinearColor(0.5f, 0.5f, 1.0f, 1.0f));
 
 			FPooledRenderTargetDesc NormalRTDesc =
-				FPooledRenderTargetDesc::Create2DDesc(CustomDepthBufferSize, PF_FloatRGB,
+				FPooledRenderTargetDesc::Create2DDesc(CustomDepthBufferSize, PF_A2B10G10R10,
 					ClearNormal, TexCreate_ShaderResource, TexCreate_RenderTargetable, false);
 
-			GRenderTargetPool.FindFreeElement(RHICmdList, NormalRTDesc, CustomWorldNormal, TEXT("CustomWorldNormal"));
+			GRenderTargetPool.FindFreeElement(RHICmdList, NormalRTDesc, CustomWorldNormal, TEXT("CustomWorldNormalRGBA"));
 		}
 
 		CustomCaptureTextures.CustomWorldNormal = CustomWorldNormal->GetTargetableRHI();

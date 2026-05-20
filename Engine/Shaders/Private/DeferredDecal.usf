@@ -11,6 +11,26 @@
 #include "DecalCommon.ush"
 #include "Common.ush"
 
+// 贴花 PS 未绑定 ReflectionStruct，不能 #include ReflectionEnvironmentShared.ush（其中 GetSkyLightReflection 等会引用 ReflectionStruct）。
+// 仅内联与 ReflectionEnvironmentShared.ush::GetSkySHDiffuseSimple 等价的天光 SH 前三项，只依赖 View 中的 SH 系数纹理。
+#if SHADING_PATH_MOBILE
+#if (FEATURE_LEVEL <= FEATURE_LEVEL_ES3_1)
+#define DecalSkyIrradianceEnvironmentMap View.MobileSkyIrradianceEnvironmentMap
+#else
+#define DecalSkyIrradianceEnvironmentMap View.SkyIrradianceEnvironmentMap
+#endif
+
+float3 DecalGetSkySHDiffuseSimple(float3 Normal)
+{
+	float4 NormalVector = float4(Normal, 1);
+	float3 Intermediate0;
+	Intermediate0.x = dot(DecalSkyIrradianceEnvironmentMap[0], NormalVector);
+	Intermediate0.y = dot(DecalSkyIrradianceEnvironmentMap[1], NormalVector);
+	Intermediate0.z = dot(DecalSkyIrradianceEnvironmentMap[2], NormalVector);
+	return max(0, Intermediate0);
+}
+#endif
+
 // from SvPosition to decal space (for position), used like this: mul(float4(SvPosition.xyz, 1), SvPositionToDecal);
 float4x4 SvPositionToDecal;
 // to transform position from decal space to world space, for normals use transpose of inverse
@@ -30,7 +50,6 @@ float2 DecalParams;
 #if DECAL_PROJECTION
 	#include "/Engine/Generated/Material.ush"
 #endif
-
 
 // from component to clip space (for decal frustum)
 float4x4 FrustumComponentToClip;
@@ -293,15 +312,36 @@ void FPixelShaderInOut_MainPS(inout FPixelShaderIn In, inout FPixelShaderOut Out
 		// only for mobile forward		
 		#if (SHADING_PATH_MOBILE && !MOBILE_DEFERRED_SHADING)
 			#if SHADINGMODELID_STYLE
-				//Custom Decels with Normal and Lighting on Mobile
-				const float3 LightVector = ResolvedView.AtmosphereLightDirection[0].xyz;
-				const float3 LightColor = ResolvedView.AtmosphereLightColor[0].rgb;
-				float3 WorldNormal = Texture2DSample(MobileSceneTextures.CustomWorldNormalTexture, MobileSceneTextures.CustomWorldNormalTextureSampler, ScreenUV).rgb;
+				half StaticShadow = 1;
+				float3 NBlend = MaterialParameters.WorldNormal;
+#if DECAL_BLEND_WORLDNORMAL
+				float4 ReceiverSurface = Texture2DSample(MobileSceneTextures.CustomWorldNormalTexture, MobileSceneTextures.CustomWorldNormalTextureSampler, ScreenUV);
+				// RT stores world normal as 0..1 (see CustomWorldNormalPass); UDN blend expects -1..1 unit vector
+				float3 WorldNormal = normalize(ReceiverSurface.rgb * 2.0 - 1.0);
+				StaticShadow = ReceiverSurface.a;
 				float3 BaseNormal = float3(WorldNormal.xy, WorldNormal.z + 1);
-				float3 AdditionNormal = float3( -MaterialParameters.WorldNormal.xy, MaterialParameters.WorldNormal.z);
+				float3 AdditionNormal = float3(-MaterialParameters.WorldNormal.xy, MaterialParameters.WorldNormal.z);
 				float3 BlendedNormal = dot(BaseNormal, AdditionNormal) * BaseNormal - (WorldNormal.z + 1) * AdditionNormal;
-				float3 NoL = max(0, dot(LightVector, BlendedNormal));
-				Color = NoL * BaseColor;
+				NBlend = normalize(BlendedNormal);
+#endif
+
+				half IndirectIrradiance = 0;
+				{
+					half3 SkyDiffuseLighting = DecalGetSkySHDiffuseSimple(MaterialParameters.WorldNormal);
+					half3 DiffuseLookup = SkyDiffuseLighting * ResolvedView.SkyLightColor.rgb;
+					IndirectIrradiance += Luminance(DiffuseLookup);
+				}
+				
+				half3 IndirectColor = BaseColor * IndirectIrradiance;
+				IndirectColor *= View.IndirectLightingColorScale;
+				Color += IndirectColor;
+
+				half3 LDir = MobileDirectionalLight.DirectionalLightDirectionAndShadowTransition.xyz;
+				half NoL = max(0, dot((half3)NBlend, LDir));
+				half3 DirectLighting = (half3)MobileDirectionalLight.DirectionalLightColor.rgb * (NoL * BaseColor);
+				DirectLighting *= saturate(StaticShadow + (1 - MobileDirectionalLight.DirectionalLightDistanceFadeMADAndSpecularScale.w)); //.w is ShadowAmount
+
+				Color += DirectLighting;
 #else
 				Color+= BaseColor;
 			#endif

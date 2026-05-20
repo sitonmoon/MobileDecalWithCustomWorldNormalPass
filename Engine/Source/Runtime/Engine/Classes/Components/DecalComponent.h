@@ -36,6 +36,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Decal)
 	int32 SortOrder;
 
+	/**
+	 * 开启世界法线融合。需要贴花接受表面的Mesh开启"Render WorldNormal Pass"选项。
+	 * 注意这会增加性能消耗。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Decal)
+	bool bBlendWorldNormal;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Decal)
 	float FadeScreenSize;
 
