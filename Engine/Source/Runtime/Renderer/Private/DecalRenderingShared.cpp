@@ -420,7 +420,7 @@ void FDecalRendering::SetShader(FRHICommandList& RHICmdList, FGraphicsPipelineSt
 	{
 		PixelShader = bEmissiveShader
 			? TShaderRef<FDeferredDecalPS>(MaterialShaderMap->GetShader<FDeferredDecalEmissivePSWithCustomWorldNormal>())
-			: MaterialShaderMap->GetShader<FDeferredDecalPSWithCustomWorldNormal>();
+			: TShaderRef<FDeferredDecalPS>(MaterialShaderMap->GetShader<FDeferredDecalPSWithCustomWorldNormal>());
 	}
 	else
 	{
